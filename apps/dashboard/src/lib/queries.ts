@@ -36,24 +36,30 @@ export interface DashboardData {
   }[];
 }
 
-/** Workspaces the current user can access (RLS returns only theirs). */
+const LEAD_CLASSES = ['product_buyer', 'business_interested', 'curious', 'unknown'] as const;
+
+/** Workspaces the current user can access (RLS returns only theirs). Throws on query error. */
 export async function getUserWorkspaces(db: SupabaseClient): Promise<WorkspaceLite[]> {
-  const { data } = await db
+  const { data, error } = await db
     .from('workspaces')
     .select('id, name, tier, branding')
     .order('created_at', { ascending: true });
+  if (error) throw new Error(`getUserWorkspaces: ${error.message}`);
   return (data ?? []) as WorkspaceLite[];
 }
 
-async function count(
+// count() that FAILS LOUD — a command center must never render "0 alerts" because a
+// query silently errored. Errors bubble to the route error boundary instead.
+async function reqCount(
   db: SupabaseClient,
   table: string,
   build: (q: any) => any,
 ): Promise<number> {
-  const { count: c } = await build(
+  const { count, error } = await build(
     db.from(table).select('*', { count: 'exact', head: true }),
   );
-  return c ?? 0;
+  if (error) throw new Error(`count(${table}): ${error.message}`);
+  return count ?? 0;
 }
 
 export async function getDashboardData(
@@ -70,25 +76,30 @@ export async function getDashboardData(
     pendingCompliance,
     pausedCampaigns,
     onboardingActive,
-    leadsRes,
+    classCounts,
     campaignsRes,
     contentRes,
     alertsRes,
     onboardingRes,
   ] = await Promise.all([
-    count(db, 'leads', (q) => q.eq('workspace_id', ws).neq('status', 'lost')),
-    count(db, 'follow_up_tasks', (q) =>
+    reqCount(db, 'leads', (q) => q.eq('workspace_id', ws).neq('status', 'lost')),
+    reqCount(db, 'follow_up_tasks', (q) =>
       q.eq('workspace_id', ws).eq('status', 'pending').lte('run_at', nowIso),
     ),
-    count(db, 'human_alerts', (q) => q.eq('workspace_id', ws).eq('status', 'open')),
-    count(db, 'content_pieces', (q) =>
+    reqCount(db, 'human_alerts', (q) => q.eq('workspace_id', ws).eq('status', 'open')),
+    reqCount(db, 'content_pieces', (q) =>
       q.eq('workspace_id', ws).eq('status', 'pending_compliance'),
     ),
-    count(db, 'ad_campaigns', (q) => q.eq('workspace_id', ws).eq('status', 'paused')),
-    count(db, 'distributor_onboarding', (q) =>
+    reqCount(db, 'ad_campaigns', (q) => q.eq('workspace_id', ws).eq('status', 'paused')),
+    reqCount(db, 'distributor_onboarding', (q) =>
       q.eq('workspace_id', ws).is('completed_at', null),
     ),
-    db.from('leads').select('classification').eq('workspace_id', ws).limit(1000),
+    // exact per-classification counts (no row-limit aggregation)
+    Promise.all(
+      LEAD_CLASSES.map((c) =>
+        reqCount(db, 'leads', (q) => q.eq('workspace_id', ws).eq('classification', c)),
+      ),
+    ),
     db
       .from('ad_campaigns')
       .select('id, name, status, objective')
@@ -116,9 +127,10 @@ export async function getDashboardData(
       .limit(6),
   ]);
 
-  const byClass = new Map<string, number>();
-  for (const row of (leadsRes.data ?? []) as { classification: string }[]) {
-    byClass.set(row.classification, (byClass.get(row.classification) ?? 0) + 1);
+  for (const [name, res] of Object.entries({ campaignsRes, contentRes, alertsRes, onboardingRes })) {
+    if ((res as { error: unknown }).error) {
+      throw new Error(`getDashboardData ${name}: ${String((res as { error: { message?: string } }).error.message)}`);
+    }
   }
 
   const alerts = ((alertsRes.data ?? []) as any[]).map((a) => ({
@@ -138,10 +150,10 @@ export async function getDashboardData(
       pausedCampaigns,
       onboardingActive,
     },
-    leadsByClassification: [...byClass.entries()].map(([classification, c]) => ({
+    leadsByClassification: LEAD_CLASSES.map((classification, i) => ({
       classification,
-      count: c,
-    })),
+      count: classCounts[i]!,
+    })).filter((d) => d.count > 0),
     campaigns: (campaignsRes.data ?? []) as DashboardData['campaigns'],
     content: (contentRes.data ?? []) as DashboardData['content'],
     alerts,

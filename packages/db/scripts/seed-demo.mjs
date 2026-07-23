@@ -4,6 +4,7 @@
 import { config } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -16,10 +17,22 @@ if (!url || !secret) {
   process.exit(1);
 }
 
+// Guard: this creates a REAL auth user on the project .env points to. Require an
+// explicit opt-in so it can never run by accident (e.g. against production).
+const WIPE_ONLY = process.argv.includes('--wipe');
+if (process.env.SEED_DEMO !== '1') {
+  console.error('Refusing to run: this seeds a real auth user + demo data.');
+  console.error('  Seed:  SEED_DEMO=1 node packages/db/scripts/seed-demo.mjs');
+  console.error('  Wipe:  SEED_DEMO=1 node packages/db/scripts/seed-demo.mjs --wipe');
+  console.error('  Stable password (optional): SEED_PASSWORD=... SEED_DEMO=1 node ...');
+  process.exit(1);
+}
+
 const db = createClient(url, secret, { auth: { autoRefreshToken: false, persistSession: false } });
 
-const DEMO_EMAIL = 'demo@apexai.test';
-const DEMO_PASSWORD = 'apexdemo1234';
+const DEMO_EMAIL = process.env.SEED_EMAIL || 'demo@apexai.test';
+// Random by default so no known weak password lingers; override with SEED_PASSWORD.
+const DEMO_PASSWORD = process.env.SEED_PASSWORD || `Apex-${randomBytes(9).toString('base64url')}`;
 const AGENCY_NAME = 'Demo Agency (apexai)';
 
 async function wipe() {
@@ -41,6 +54,10 @@ async function wipe() {
 
 async function main() {
   await wipe();
+  if (WIPE_ONLY) {
+    console.log('Demo agency + user wiped.');
+    return;
+  }
 
   const { data: user, error: uErr } = await db.auth.admin.createUser({
     email: DEMO_EMAIL,
