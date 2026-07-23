@@ -38,7 +38,25 @@ if (caPath) {
   ssl = { rejectUnauthorized: false };
 }
 
-const client = new pg.Client({ connectionString: dbUrl, ssl });
+// Parse by splitting on the LAST '@' so passwords containing '@' (or ':', '/') work
+// without requiring percent-encoding in .env. Falls back to the raw string.
+function parsePgUrl(raw) {
+  const withoutScheme = raw.replace(/^postgres(?:ql)?:\/\//, '');
+  const lastAt = withoutScheme.lastIndexOf('@');
+  if (lastAt === -1) return null;
+  const creds = withoutScheme.slice(0, lastAt);
+  const hostPart = withoutScheme.slice(lastAt + 1);
+  const firstColon = creds.indexOf(':');
+  const user = firstColon === -1 ? creds : creds.slice(0, firstColon);
+  const password = firstColon === -1 ? undefined : creds.slice(firstColon + 1);
+  const hostMatch = hostPart.match(/^([^:/]+)(?::(\d+))?\/([^?]+)/);
+  if (!hostMatch) return null;
+  const [, host, port, database] = hostMatch;
+  return { user, password, host, port: port ? Number(port) : 5432, database };
+}
+
+const parsed = parsePgUrl(dbUrl);
+const client = new pg.Client(parsed ? { ...parsed, ssl } : { connectionString: dbUrl, ssl });
 
 async function main() {
   await client.connect();
