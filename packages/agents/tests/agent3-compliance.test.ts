@@ -57,8 +57,6 @@ describe('compliance engine (real Claude)', () => {
     const res = await runComplianceCheck(db, {
       workspaceId: wsId,
       contentPieceId: piece!.id,
-      body,
-      type: 'copy',
     });
     expect(res.verdict).toBe('rejected');
     expect(res.reasons.length).toBeGreaterThan(0);
@@ -74,8 +72,6 @@ describe('compliance engine (real Claude)', () => {
     const res = await runComplianceCheck(db, {
       workspaceId: wsId,
       contentPieceId: piece!.id,
-      body,
-      type: 'copy',
     });
     expect(res.verdict).toBe('rejected');
   });
@@ -91,8 +87,6 @@ describe('compliance engine (real Claude)', () => {
     const res = await runComplianceCheck(db, {
       workspaceId: wsId,
       contentPieceId: piece!.id,
-      body,
-      type: 'wa_status',
     });
     expect(res.verdict).toBe('approved');
   });

@@ -40,12 +40,28 @@ interface Topic {
 export interface RunAgent3Input {
   workspaceId: string;
   count?: number;
+  /** content calendar day these pieces belong to (YYYY-MM-DD). Defaults to today. */
+  targetDate?: string;
+  /** regenerate even if pieces already exist for targetDate (default false). */
+  force?: boolean;
 }
 export interface RunAgent3Summary {
   generated: number;
   approved: number;
   rejected: number;
   pending: number;
+  /** pieces dropped because the model returned a topic outside approved_topics */
+  skipped: number;
+  targetDate: string;
+  /** true when a run already existed for targetDate and we skipped (idempotency) */
+  idempotentSkip: boolean;
+}
+
+const MAX_COUNT = 20;
+
+function normalizeCount(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw)) return 5;
+  return Math.max(1, Math.min(MAX_COUNT, Math.floor(raw)));
 }
 
 function buildGenerationPrompt(brand: BrandProfile, topics: Topic[]): string {
@@ -84,7 +100,31 @@ export async function runAgent3(
   input: RunAgent3Input,
   db: SupabaseClient = getServiceClient(),
 ): Promise<RunAgent3Summary> {
-  const count = input.count ?? 5;
+  const count = normalizeCount(input.count);
+  const targetDate = input.targetDate ?? new Date().toISOString().slice(0, 10);
+  const empty: RunAgent3Summary = {
+    generated: 0,
+    approved: 0,
+    rejected: 0,
+    pending: 0,
+    skipped: 0,
+    targetDate,
+    idempotentSkip: false,
+  };
+
+  // --- idempotency guard: don't regenerate a day that already has content ---
+  if (!input.force) {
+    const { data: existing } = await db
+      .from('content_pieces')
+      .select('id')
+      .eq('workspace_id', input.workspaceId)
+      .eq('scheduled_for', targetDate)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      logger.info('agent3.idempotent_skip', { workspaceId: input.workspaceId, targetDate });
+      return { ...empty, idempotentSkip: true };
+    }
+  }
 
   // --- tier feature guard ---
   const { data: ws, error: wsErr } = await db
@@ -132,14 +172,24 @@ export async function runAgent3(
     user: `Genera ${count} piezas variadas (reel_script, tiktok_script, copy, wa_status) usando SOLO los temas aprobados. Cada pieza debe citar un topicTitle EXACTO de la lista.`,
     schema: GenerationSchema,
     effort: 'medium',
-    maxTokens: 4096,
+    maxTokens: Math.min(16000, 2000 + count * 700),
   });
 
   const topicIdByTitle = new Map(topics.map((t) => [t.title.trim().toLowerCase(), t.id]));
-  const summary: RunAgent3Summary = { generated: 0, approved: 0, rejected: 0, pending: 0 };
+  const summary: RunAgent3Summary = { ...empty };
 
   for (const piece of generated.pieces) {
-    const topicId = topicIdByTitle.get(piece.topicTitle.trim().toLowerCase()) ?? null;
+    // Enforce "approved topics only": drop any piece whose topic is not in the
+    // approved list (guards against a hallucinated topicTitle).
+    const topicId = topicIdByTitle.get(piece.topicTitle.trim().toLowerCase());
+    if (topicId === undefined) {
+      logger.warn('agent3.unknown_topic_skipped', {
+        workspaceId: input.workspaceId,
+        topicTitle: piece.topicTitle,
+      });
+      summary.skipped++;
+      continue;
+    }
 
     const { data: inserted, error: insErr } = await db
       .from('content_pieces')
@@ -149,6 +199,7 @@ export async function runAgent3(
         type: piece.type,
         body: piece.body,
         status: 'pending_compliance',
+        scheduled_for: targetDate,
         generated_by: `${getConfig().ANTHROPIC_MODEL}/${GEN_PROMPT_VERSION}`,
       })
       .select('id')
@@ -164,8 +215,6 @@ export async function runAgent3(
       const result = await runComplianceCheck(db, {
         workspaceId: input.workspaceId,
         contentPieceId: inserted.id,
-        body: piece.body,
-        type: piece.type,
         ruleset,
       });
 
