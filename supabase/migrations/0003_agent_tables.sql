@@ -185,6 +185,8 @@ create table content_pieces (
   topic_id      uuid references approved_topics(id) on delete set null,
   type          content_type not null,
   body          text not null,
+  -- bumped whenever body changes; an approved compliance_check must be newer than this (0005 trigger)
+  body_updated_at timestamptz not null default now(),
   -- status can only reach approved/published via the compliance gate (0005 trigger)
   status        content_status not null default 'draft',
   scheduled_for date,

@@ -22,10 +22,23 @@ if (!dbUrl) {
   process.exit(1);
 }
 
-const client = new pg.Client({
-  connectionString: dbUrl,
-  ssl: { rejectUnauthorized: false },
-});
+// TLS: verify the server cert when a CA is provided (recommended). Supabase publishes
+// its CA at Settings > Database > SSL configuration; point SUPABASE_DB_CA at the .crt file.
+// Without it we fall back to an unverified connection and warn loudly.
+const caPath = process.env.SUPABASE_DB_CA;
+let ssl;
+if (caPath) {
+  ssl = { ca: readFileSync(caPath, 'utf8'), rejectUnauthorized: true };
+} else {
+  console.warn(
+    'WARN: SUPABASE_DB_CA not set — the migration connection will NOT verify the server ' +
+    'TLS certificate (MITM risk on a connection carrying the DB password + all DDL).\n' +
+    '      Download the CA from Supabase (Settings > Database > SSL) and set SUPABASE_DB_CA.'
+  );
+  ssl = { rejectUnauthorized: false };
+}
+
+const client = new pg.Client({ connectionString: dbUrl, ssl });
 
 async function main() {
   await client.connect();

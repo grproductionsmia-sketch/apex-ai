@@ -20,14 +20,29 @@ begin
       raise exception 'Apex invariant: campaign % cannot be active without activated_by (explicit human action required)', new.id
         using errcode = 'check_violation';
     end if;
-    if not exists (
-      select 1 from campaign_activation_audit
-      where campaign_id = new.id
-        and action = 'activated'
-        and actor_user_id = new.activated_by
-    ) then
-      raise exception 'Apex invariant: campaign % activation requires a matching audit record (action=activated by the same actor)', new.id
-        using errcode = 'check_violation';
+    if tg_op = 'UPDATE' then
+      -- reactivation must have a FRESH approval: an audit row newer than the
+      -- campaign's last state change (prevents reusing a pre-pause audit row).
+      if not exists (
+        select 1 from campaign_activation_audit
+        where campaign_id = new.id
+          and action = 'activated'
+          and actor_user_id = new.activated_by
+          and created_at >= old.updated_at
+      ) then
+        raise exception 'Apex invariant: campaign % activation requires a fresh audit record (newer than the last state change)', new.id
+          using errcode = 'check_violation';
+      end if;
+    else
+      if not exists (
+        select 1 from campaign_activation_audit
+        where campaign_id = new.id
+          and action = 'activated'
+          and actor_user_id = new.activated_by
+      ) then
+        raise exception 'Apex invariant: campaign % activation requires a matching audit record (action=activated by the same actor)', new.id
+          using errcode = 'check_violation';
+      end if;
     end if;
   end if;
   return new;
@@ -49,13 +64,23 @@ security definer
 set search_path = public
 as $$
 begin
+  -- Track the current body version. Editing the body invalidates prior approvals.
+  if tg_op = 'INSERT' or new.body is distinct from old.body then
+    new.body_updated_at := now();
+  else
+    new.body_updated_at := old.body_updated_at;
+  end if;
+
   if new.status in ('approved','published') then
+    -- The passing check must be for the CURRENT body (created at/after the last body change),
+    -- so content edited after approval cannot stay approved/published on a stale check.
     if not exists (
       select 1 from compliance_checks
       where content_piece_id = new.id
         and verdict = 'approved'
+        and created_at >= new.body_updated_at
     ) then
-      raise exception 'Apex invariant: content % cannot be approved/published without a passing compliance check', new.id
+      raise exception 'Apex invariant: content % cannot be approved/published without a passing compliance check for the current body', new.id
         using errcode = 'check_violation';
     end if;
   end if;

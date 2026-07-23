@@ -261,4 +261,141 @@ describe('Invariant: Agente 3 content needs passing compliance', () => {
       .eq('id', piece!.id);
     expect(error).toBeTruthy();
   });
+
+  // Fix A1: editing the body after approval must invalidate the stale approval.
+  it('editing body of an approved piece cannot keep it approved on a stale check', async () => {
+    const { data: piece } = await admin
+      .from('content_pieces')
+      .insert({ workspace_id: wsA, type: 'copy', body: 'v1' })
+      .select('id')
+      .single();
+    await admin.from('compliance_checks').insert({
+      workspace_id: wsA,
+      content_piece_id: piece!.id,
+      verdict: 'approved',
+      model: 'test',
+    });
+    const { error: approveErr } = await admin
+      .from('content_pieces')
+      .update({ status: 'approved' })
+      .eq('id', piece!.id);
+    expect(approveErr).toBeNull();
+
+    // edit body while still 'approved' -> blocked (stale check no longer covers new body)
+    const { error: editErr } = await admin
+      .from('content_pieces')
+      .update({ body: 'v2 edited' })
+      .eq('id', piece!.id);
+    expect(editErr).toBeTruthy();
+
+    // proper flow: downgrade + edit in one shot is allowed
+    const { error: downgradeErr } = await admin
+      .from('content_pieces')
+      .update({ body: 'v2 edited', status: 'pending_compliance' })
+      .eq('id', piece!.id);
+    expect(downgradeErr).toBeNull();
+
+    // stale (pre-edit) approved check must not let it re-approve
+    const { error: stillStaleErr } = await admin
+      .from('content_pieces')
+      .update({ status: 'approved' })
+      .eq('id', piece!.id);
+    expect(stillStaleErr).toBeTruthy();
+
+    // fresh check for the new body -> re-approval ok
+    await admin.from('compliance_checks').insert({
+      workspace_id: wsA,
+      content_piece_id: piece!.id,
+      verdict: 'approved',
+      model: 'test',
+    });
+    const { error: reapproveErr } = await admin
+      .from('content_pieces')
+      .update({ status: 'approved' })
+      .eq('id', piece!.id);
+    expect(reapproveErr).toBeNull();
+  });
+});
+
+describe('Invariant: campaign reactivation needs a fresh approval (fix M1)', () => {
+  it('cannot reactivate by reusing a pre-pause audit row', async () => {
+    const { data: camp } = await admin
+      .from('ad_campaigns')
+      .insert({ workspace_id: wsA, name: 'c-reactivate' })
+      .select('id')
+      .single();
+
+    // legit first activation
+    await admin.from('campaign_activation_audit').insert({
+      workspace_id: wsA,
+      campaign_id: camp!.id,
+      action: 'activated',
+      actor_user_id: userA,
+    });
+    const { error: act1 } = await admin
+      .from('ad_campaigns')
+      .update({ status: 'active', activated_by: userA, activated_at: new Date().toISOString() })
+      .eq('id', camp!.id);
+    expect(act1).toBeNull();
+
+    // pause
+    const { error: pauseErr } = await admin
+      .from('ad_campaigns')
+      .update({ status: 'paused' })
+      .eq('id', camp!.id);
+    expect(pauseErr).toBeNull();
+
+    // reactivate reusing the OLD audit row -> must fail (audit older than last state change)
+    const { error: reuseErr } = await admin
+      .from('ad_campaigns')
+      .update({ status: 'active', activated_by: userA })
+      .eq('id', camp!.id);
+    expect(reuseErr).toBeTruthy();
+
+    // with a fresh audit row -> ok
+    await admin.from('campaign_activation_audit').insert({
+      workspace_id: wsA,
+      campaign_id: camp!.id,
+      action: 'activated',
+      actor_user_id: userA,
+    });
+    const { error: act2 } = await admin
+      .from('ad_campaigns')
+      .update({ status: 'active', activated_by: userA, activated_at: new Date().toISOString() })
+      .eq('id', camp!.id);
+    expect(act2).toBeNull();
+  });
+});
+
+describe('RLS: compliance_rulesets isolation (fix C1)', () => {
+  it('user A cannot read another workspace/agency ruleset, nor write any', async () => {
+    // ruleset owned by workspace B (created via service role)
+    const { data: rs, error: rsErr } = await admin
+      .from('compliance_rulesets')
+      .insert({ owner_type: 'workspace', owner_id: wsB, name: 'B ruleset', rules: {} })
+      .select('id')
+      .single();
+    expect(rsErr).toBeNull();
+
+    // user A must not see workspace B's ruleset
+    const { data: seen } = await clientA.from('compliance_rulesets').select('id').eq('id', rs!.id);
+    expect(seen ?? []).toHaveLength(0);
+
+    // user A cannot forge/insert a ruleset (no write policy for authenticated)
+    const { data: ins, error: insErr } = await clientA
+      .from('compliance_rulesets')
+      .insert({ owner_type: 'workspace', owner_id: wsA, name: 'evil', rules: {} })
+      .select('id');
+    if (insErr) {
+      expect(insErr).toBeTruthy();
+    } else {
+      expect(ins ?? []).toHaveLength(0);
+    }
+    const { data: check } = await admin
+      .from('compliance_rulesets')
+      .select('id')
+      .eq('owner_id', wsA)
+      .eq('name', 'evil');
+    expect(check ?? []).toHaveLength(0);
+  });
 });

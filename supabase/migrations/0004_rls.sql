@@ -30,13 +30,15 @@ grant execute on function auth_workspace_ids() to authenticated, anon;
 do $$
 declare
   t text;
+  -- workspace_id NOT NULL, standard full tenant scoping (select + write).
+  -- (global-nullable tables and select-only tables handled separately below.)
   std_tables text[] := array[
     'leads','conversations','messages','lead_qualifications',
-    'follow_up_sequences','follow_up_tasks','human_alerts',
+    'follow_up_tasks','human_alerts',
     'brand_profiles','approved_topics','content_pieces','content_vectors',
     'ad_campaigns','ad_audiences','landing_pages','landing_submissions','referrals',
-    'onboarding_checklists','distributor_onboarding','knowledge_documents','knowledge_chunks',
-    'insights_reports','workspace_integrations'
+    'distributor_onboarding',
+    'insights_reports'
   ];
 begin
   foreach t in array std_tables loop
@@ -65,6 +67,40 @@ begin
             ' for select using (workspace_id in (select auth_workspace_ids()))';
   end loop;
 end $$;
+
+-- ---------- global-nullable tables: SELECT includes global (workspace_id is null) rows,
+--            but WRITE stays workspace-scoped (users cannot create/modify global templates) ----------
+do $$
+declare
+  t text;
+  global_tables text[] := array[
+    'follow_up_sequences','onboarding_checklists','knowledge_documents','knowledge_chunks'
+  ];
+begin
+  foreach t in array global_tables loop
+    execute 'alter table '||quote_ident(t)||' enable row level security';
+    execute 'create policy '||quote_ident(t||'_select')||' on '||quote_ident(t)||
+            ' for select using (workspace_id in (select auth_workspace_ids()) or workspace_id is null)';
+    execute 'create policy '||quote_ident(t||'_mod')||' on '||quote_ident(t)||
+            ' for all using (workspace_id in (select auth_workspace_ids()))'||
+            ' with check (workspace_id in (select auth_workspace_ids()))';
+  end loop;
+end $$;
+
+-- ---------- workspace_integrations: SELECT scoped, NO user writes.
+-- Holds vault_secret_id references; managed only by the backend (service_role) so a user
+-- cannot repoint their integration at another workspace's vault secret. ----------
+alter table workspace_integrations enable row level security;
+create policy workspace_integrations_select on workspace_integrations for select
+  using (workspace_id in (select auth_workspace_ids()));
+
+-- ---------- compliance_rulesets: polymorphic owner (agency|workspace), SELECT scoped by owner,
+-- NO user writes (rulesets are managed by the backend / agency admin flows). ----------
+alter table compliance_rulesets enable row level security;
+create policy compliance_rulesets_select on compliance_rulesets for select using (
+  (owner_type = 'workspace' and owner_id in (select auth_workspace_ids()))
+  or (owner_type = 'agency'  and owner_id in (select agency_id from agency_members where user_id = auth.uid()))
+);
 
 -- ---------- no-user-access table (service_role only, RLS on with no policy) ----------
 alter table webhook_events enable row level security;
