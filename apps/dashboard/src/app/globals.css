@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-card: var(--card);
+  --color-card-2: var(--card-2);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-inter), sans-serif;
+}
+
+:root {
+  --background: #0a0e14;
+  --card: #111825;
+  --card-2: #161f2f;
+  --border: #202a3c;
+  --foreground: #e6edf3;
+  --muted: #8b97a8;
+  --accent: #4de3c1;
+  --accent-2: #5b9dff;
+  --warning: #f5a524;
+  --danger: #f4436c;
+  --success: #3fd07f;
+}
+
+[data-theme="light"] {
+  --background: #f6f8fc;
+  --card: #ffffff;
+  --card-2: #eef2f8;
+  --border: #dfe6f0;
+  --foreground: #0f1720;
+  --muted: #566579;
+  --accent: #0fb89a;
+  --accent-2: #2f6fe0;
+  --warning: #b9761a;
+  --danger: #d61f4b;
+  --success: #1f9e5c;
+}
+
+html { color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display { font-family: var(--font-display); letter-spacing: -0.02em; }
+
+/* command-center backdrop glow */
+.cc-grid {
+  background-image:
+    radial-gradient(circle at 15% -10%, rgba(91, 157, 255, 0.08), transparent 40%),
+    radial-gradient(circle at 105% -20%, rgba(77, 227, 193, 0.06), transparent 38%);
+}
+
+@keyframes pulse-ring { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.animate-pulse-ring { animation: pulse-ring 2s ease-in-out infinite; }
+
+/* skeleton shimmer */
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+.skeleton { position: relative; overflow: hidden; background: var(--card-2); }
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+  animation: shimmer 1.5s infinite;
+}
