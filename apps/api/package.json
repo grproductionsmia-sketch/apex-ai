@@ -1,0 +1,21 @@
+{
+  "name": "@apex/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@apex/agents": "workspace:*",
+    "@apex/core": "workspace:*",
+    "@apex/whatsapp": "workspace:*",
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "dotenv": "^16.6.1",
+    "tsx": "^4.23.1"
+  }
+}
