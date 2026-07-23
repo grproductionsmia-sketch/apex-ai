@@ -1,0 +1,37 @@
+# --- Secrets / env (NEVER commit) ---
+.env
+.env.*
+!.env.example
+
+# --- Dependencies ---
+node_modules/
+.pnpm-store/
+
+# --- Build output ---
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# --- Turbo / caches ---
+.turbo/
+.cache/
+
+# --- Logs ---
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Supabase CLI local ---
+supabase/.branches/
+supabase/.temp/
+
+# --- Test / coverage ---
+coverage/

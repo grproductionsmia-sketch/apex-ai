@@ -1,0 +1,16 @@
+{
+  "name": "apex-ai",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "db:apply": "pnpm --filter @apex/db apply",
+    "db:test": "pnpm --filter @apex/db test"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.3",
+    "typescript": "^5.6.3"
+  }
+}
