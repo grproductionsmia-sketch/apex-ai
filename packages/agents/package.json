@@ -16,6 +16,7 @@
     "@apex/compliance": "workspace:*",
     "@apex/core": "workspace:*",
     "@apex/shared": "workspace:*",
+    "@apex/whatsapp": "workspace:*",
     "zod": "^4"
   },
   "devDependencies": {
